@@ -35,10 +35,10 @@ jobs:
       job-config: ${{ steps.generate-config.outputs.job-config }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '24'
 
@@ -63,7 +63,7 @@ jobs:
           fi
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Generate Job Config
         id: generate-config
@@ -82,7 +82,7 @@ jobs:
 
     steps:
       - name: Checkout AWG source code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install Python dependencies
         run: |
@@ -91,7 +91,7 @@ jobs:
 
       - name: Cache OpenWrt SDK
         id: cache-sdk
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         env:
           cache-name: "cache-sdk-${{ matrix.build_env.tag }}-${{ matrix.build_env.target}}-${{ matrix.build_env.subtarget}}"
         with:
@@ -115,6 +115,16 @@ jobs:
           echo "Downloading SDK: $SDK_DOWNLOAD_URL"
           
           wget "$SDK_DOWNLOAD_URL"
+
+          # Verify SDK: sha256sums is signed by the OpenWrt release key (committed in keys/)
+          SUMS_URL="https://downloads.openwrt.org/releases/${{ matrix.build_env.tag }}/targets/${{ matrix.build_env.target}}/${{ matrix.build_env.subtarget}}"
+          wget -O sdk.sha256sums "$SUMS_URL/sha256sums"
+          wget -O sdk.sha256sums.asc "$SUMS_URL/sha256sums.asc"
+          export GNUPGHOME="$(mktemp -d)"
+          gpg --batch --import keys/openwrt-release-*.asc
+          gpg --batch --verify sdk.sha256sums.asc sdk.sha256sums
+          grep " \*${SDK_FILE}\$" sdk.sha256sums | sed 's/ \*/  /' | sha256sum -c -
+          rm -f sdk.sha256sums sdk.sha256sums.asc
           
           # Extract based on file extension
           if [[ "$SDK_FILE" == *.tar.zst ]]; then
@@ -178,6 +188,9 @@ jobs:
             package/luci-proto-amneziawg/compile \
             V=s
           
+          echo "Source tarballs (for PKG_MIRROR_HASH pinning):"
+          sha256sum dl/amneziawg-* dl/kmod-amneziawg-* 2>/dev/null || true
+
           echo "Build completed. Checking for built packages..."
           find bin/ -name "*.?pk" | grep -E "(amneziawg|luci-proto-amneziawg|luci-i18n-amneziawg)" | head -10
 
@@ -195,11 +208,16 @@ jobs:
           find "$SDK_DIR/bin/packages" -name "luci-i18n-amneziawg-ru*.?pk" -exec sh -c 'file="$1"; postfix="$2"; ext="${file##*.}"; cp "$file" "awgrelease/luci-i18n-amneziawg-ru_${postfix}.${ext}"' _ {} "${postfix}" \; || echo "luci-i18n-amneziawg-ru package not found"
           find "$SDK_DIR/bin/targets" -name "kmod-amneziawg*.?pk" -exec sh -c 'file="$1"; postfix="$2"; ext="${file##*.}"; cp "$file" "awgrelease/kmod-amneziawg_${postfix}.${ext}"' _ {} "${postfix}" \; || echo "kmod-amneziawg package not found"
           
+          (cd awgrelease && sha256sum *.?pk > "SHA256SUMS_${postfix}.txt")
+
           echo "Built packages:"
           ls -la awgrelease/
+          cat awgrelease/SHA256SUMS_*.txt
 
       - name: Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
-          files: awgrelease/*.?pk
+          files: |
+            awgrelease/*.?pk
+            awgrelease/SHA256SUMS_*.txt
           tag_name: v${{ matrix.build_env.tag }}
